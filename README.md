@@ -8,7 +8,7 @@ Veronica
  - 项目使用go module
 
 ## 用法
-1. 在项目的根目录放置[veronica.yaml](./veronica.yaml)文件
+1. 在项目的根目录放置[veronica.yaml](./veronica_example.yaml)文件
 2. 切换至项目目录，输入以下代码:
 ```bash
 git log --name-only -1 --pretty=format:"" | veronica
