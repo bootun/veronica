@@ -1,0 +1,8 @@
+version: 0.0.1
+project:
+  go.mod: go.mod
+  # your service
+  entrypoint:
+    - cmd/api-gateway
+    - cmd/assets-manager
+    - cmd/assets-cron
