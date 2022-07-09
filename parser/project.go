@@ -278,3 +278,33 @@ func (p *project) ReportImpact(changed []string) {
 		}
 	}
 }
+
+// GetAffectedEntrypoint returns affected entrypoint, each entrypoint can only appear once at most.
+func (p *project) GetAffectedEntrypoint(changed []string) ([]string, error) {
+	if !p.parsed {
+		return nil, errors.New("project not parsed")
+	}
+
+	// record entrypoint that have been processed
+	processed := make(map[string]struct{}, len(p.Entrypoint))
+	var result []string
+	for _, file := range changed {
+		filePkg := path.New(file).Dir()
+
+		// if the file affects entrypoint, add it to result
+		if entrypoints, exists := p.dependencies[filePkg.String()]; exists {
+
+			// record affected entrypoint
+			for _, point := range entrypoints {
+
+				// if the entrypoint has been processed, skip it
+				if _, exists := processed[point]; !exists {
+					result = append(result, point)
+					processed[point] = struct{}{}
+				}
+			}
+
+		}
+	}
+	return result, nil
+}
