@@ -43,4 +43,5 @@ func main() {
 	for _, v := range entrypoints {
 		log.Printf("%s", v)
 	}
+	// project.ReportImpact(changedFiles)
 }

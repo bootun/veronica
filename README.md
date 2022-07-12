@@ -13,6 +13,65 @@ Veronica
 ```bash
 git log --name-only -1 --pretty=format:"" | veronica
 ```
+**详细输出效果:**  
+<details>
+<pre>
+改动了 pkg/apigateway/spec 包中的 pkg/apigateway/spec/api.swagger.json 文件,可能会影响这些包的构建:
+    - cmd/api-gateway
+
+改动了 pkg/apigateway/spec 包中的 pkg/apigateway/spec/static.go 文件,可能会影响这些包的构建:
+    - cmd/api-gateway
+
+改动了 pkg/pb 包中的 pkg/pb/merchant_assets.pb.go 文件,可能会影响这些包的构建:
+    - cmd/api-gateway
+    - cmd/assets-cron
+    - cmd/currency-cron
+    - cmd/iam-cron
+    - cmd/iam-manager
+    - cmd/across-cron
+    - cmd/assets-manager
+    - cmd/currency-manager
+    - cmd/system-cron
+    - cmd/system-manager
+    - cmd/across-manager
+
+改动了 pkg/pb 包中的 pkg/pb/merchant_assets.pb.gw.go 文件,可能会影响这些包的构建:
+    - cmd/api-gateway
+    - cmd/assets-cron
+    - cmd/currency-cron
+    - cmd/iam-cron
+    - cmd/iam-manager
+    - cmd/across-cron
+    - cmd/assets-manager
+    - cmd/currency-manager
+    - cmd/system-cron
+    - cmd/system-manager
+    - cmd/across-manager
+
+改动了 pkg/service/assets 包中的 pkg/service/assets/handler_merchant_assets.go 文件,可能会影响这些包的构建:
+    - cmd/assets-manager
+</pre>
+</details>
+
+**简略输出效果：**  
+<details>
+<pre>
+cmd/api-gateway
+cmd/across-cron
+cmd/currency-cron
+cmd/iam-manager
+cmd/system-cron
+cmd/system-manager
+cmd/across-manager
+cmd/assets-cron
+cmd/assets-manager
+cmd/currency-manager
+cmd/iam-cron
+</pre>
+</details>
+
+> 在0.0.2版本之后，默认输出精简模式，想要获取详细输出，需要在`veronica.go`中调用`project.ReportImpact()`并自行编译。目前我正在积极探索更加灵活的输出方式。
+
 ## 已实现功能
  - 解析所有文件/目录之间的依赖关系
  - 报告可能影响构建的包
