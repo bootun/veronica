@@ -12,6 +12,7 @@ import (
 	"github.com/bootun/veronica/tools/path"
 )
 
+// NewProject create a new project
 func NewProject(root string) (*project, error) {
 	rootPath := path.New(root)
 	if !rootPath.IsDir() {
@@ -35,10 +36,10 @@ func NewProject(root string) (*project, error) {
 
 	// parse go.mod
 	var gomodPath string
-	if cfg.Project.GoMod == "" {
+	if cfg.GoMod == "" {
 		gomodPath = rootPath.Join("go.mod").String()
 	} else {
-		gomodPath = cfg.Project.GoMod
+		gomodPath = cfg.GoMod
 	}
 	module, err := ParseGoModuleInfo(gomodPath)
 	if err != nil {
@@ -47,14 +48,14 @@ func NewProject(root string) (*project, error) {
 
 	// initialize entrypoint
 	entrypoint := make(map[string]*packageT)
-	for _, v := range cfg.Project.Entrypoint {
-		fullRelPath := rootPath.Join(v)
+	for _, v := range cfg.Services {
+		fullRelPath := rootPath.Join(v.Entrypoint)
 		relPath, err := fullRelPath.Rel(root)
 		if err != nil {
 			return nil, errors.WithMessage(err, "failed to get relative path")
 		}
 		entrypoint[relPath.String()] = &packageT{
-			Name:       relPath.String(),
+			Name:       v.Name,
 			Files:      make(map[string]*fileT),
 			ImportedBy: make(map[string]*packageT),
 			Imports:    make(map[string]*packageT),
@@ -72,6 +73,7 @@ func NewProject(root string) (*project, error) {
 	return project, nil
 }
 
+// project represents a monolithic go project, every entrypoint is a service
 type project struct {
 	// Module records the information of go.mod
 	Module *GoModuleInfo

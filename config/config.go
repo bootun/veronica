@@ -9,24 +9,31 @@ import (
 )
 
 type Config struct {
-	Version string      `yaml:"version"`
-	Project ProjectInfo `yaml:"project"`
+	Version  string              `yaml:"version"`
+	Services map[string]*Service `yaml:"services"`
+	GoMod    string              `yaml:"go.mod"`
+	Hooks    []string            `yaml:"hooks"`
 }
 
-type ProjectInfo struct {
-	GoMod      string            `yaml:"go.mod"`
-	Entrypoint []string          `yaml:"entrypoint"`
-	Ignore     []string          `yaml:"ignore"`
-	Hooks      map[string]string `yaml:"hooks"`
+type Service struct {
+	Name string
+	// Entrypoint represent the main package of the service.
+	Entrypoint string   `yaml:"entrypoint"`
+	Ignore     []string `yaml:"ignore"`
+	Hooks      []string `yaml:"hooks"`
 }
 
 func parseConfig(b []byte) (*Config, error) {
 	var config Config
+	config.Services = map[string]*Service{}
 	if err := yaml.Unmarshal(b, &config); err != nil {
 		return nil, err
 	}
-	for k, v := range config.Project.Hooks {
+	for k, v := range config.Hooks {
 		log.Printf("%s: %s", k, v)
+	}
+	for k, v := range config.Services {
+		(*v).Name = k
 	}
 	return &config, nil
 }

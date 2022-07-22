@@ -16,16 +16,25 @@ func TestParseConfig(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "v0",
+			name: "v0.1",
 			args: args{
-				content: []byte(configV0),
+				content: []byte(configV01),
 			},
 			want: &Config{
-				Version: "0.0.1",
-				Project: ProjectInfo{
-					GoMod:      "./go.mod",
-					Entrypoint: []string{"cmd/api-gateway", "./cmd/assets-manager"},
-					Ignore:     []string{"xxx.go"},
+				Version: "0.1.0",
+				Services: map[string]*Service{
+					"api-gateway": &Service{
+						Name:       "api-gateway",
+						Entrypoint: "cmd/api-gateway",
+						Ignore:     []string{"xxx.go"},
+						Hooks:      []string{"a.file"},
+					},
+					"assets-manager": &Service{
+						Name:       "assets-manager",
+						Entrypoint: "cmd/assets-manager",
+						Ignore:     nil,
+						Hooks:      nil,
+					},
 				},
 			},
 			wantErr: false,
@@ -47,16 +56,16 @@ func TestParseConfig(t *testing.T) {
 		})
 	}
 }
-
-var configV0 = `
-version: 0.0.1
-project:
-  go.mod: ./go.mod
-  # your service
-  entrypoint:
-    - cmd/api-gateway
-    - ./cmd/assets-manager
-  ignore:
-    - xxx.go
-
+var configV01 = `
+version: 0.1.0
+services: 
+  api-gateway:
+    # main package
+    entrypoint: cmd/api-gateway
+    ignore:
+      - xxx.go
+    hooks:
+      - a.file
+  assets-manager:
+    entrypoint: cmd/assets-manager
 `
