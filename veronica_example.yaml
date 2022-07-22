@@ -1,9 +1,16 @@
-version: 0.0.2
-project:
-  # can be omitted
-  go.mod: go.mod
-  # your service
-  entrypoint:
-    - cmd/api-gateway
-    - cmd/assets-manager
-    - cmd/assets-cron
+version: 0.1.0
+services: 
+  # every item is a service
+  api-gateway:
+    # main package
+    entrypoint: cmd/api-gateway
+
+  assets-manager:
+    entrypoint: cmd/assets-manager
+  
+  # the service name does not neeed to be the same as the entrypoint
+  assets-cron-deprecated:
+    entrypoint: cmd/assets-cron/v1
+
+  assets-cron-release:
+    entrypoint: cmd/assets-cron/v2
