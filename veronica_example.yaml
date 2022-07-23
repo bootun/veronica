@@ -1,9 +1,14 @@
-version: 0.1.0
+version: 0.1.1
 services: 
   # every item is a service
   api-gateway:
     # main package
     entrypoint: cmd/api-gateway
+    ignores:
+      - 'pkg/**/*doc.go'
+    hooks:
+      - '**/Makefile'
+      - 'go.mod'
 
   assets-manager:
     entrypoint: cmd/assets-manager

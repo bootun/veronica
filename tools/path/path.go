@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	doublestar "github.com/bmatcuk/doublestar/v4"
 )
 
 type FilePath string
@@ -95,4 +97,10 @@ func (f FilePath) Walk(fn walkFunc) error {
 		func(path string, info os.FileInfo, err error) error {
 			return fn(FilePath(path))
 		})
+}
+
+// Match returns true if `f` matches the file name `pattern`
+func (f FilePath) Match(pattern string) bool {
+	isMatch, _ := doublestar.PathMatch(pattern, string(f))
+	return isMatch
 }

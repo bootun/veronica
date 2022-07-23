@@ -48,6 +48,8 @@ func NewProject(root string) (*project, error) {
 
 	// initialize entrypoint
 	entrypoint := make(map[string]*packageT)
+	ignores := make(map[string][]string)
+	hooks := make(map[string][]string)
 	for _, v := range cfg.Services {
 		fullRelPath := rootPath.Join(v.Entrypoint)
 		relPath, err := fullRelPath.Rel(root)
@@ -60,6 +62,8 @@ func NewProject(root string) (*project, error) {
 			ImportedBy: make(map[string]*packageT),
 			Imports:    make(map[string]*packageT),
 		}
+		ignores[relPath.String()] = v.Ignores
+		hooks[relPath.String()] = v.Hooks
 	}
 	// initialize project
 	project := &project{
@@ -69,6 +73,8 @@ func NewProject(root string) (*project, error) {
 		Entrypoint:    entrypoint,
 		parsed:        false,
 		dependencies:  make(map[string][]string),
+		Ignores:       ignores,
+		Hooks:         hooks,
 	}
 	return project, nil
 }
@@ -81,6 +87,10 @@ type project struct {
 	Entrypoint map[string]*packageT
 	// number of go files
 	GoFileCounter int // TODO: 改用map，统计所有文件
+
+	// key is entrypoint package name, value is match pattern
+	Ignores map[string][]string
+	Hooks   map[string][]string
 
 	parsed bool
 	// key is package name, value is the dependent entrypoint
@@ -239,6 +249,7 @@ func (p *project) Parse() error {
 
 func (p *project) walkEntryPoint() {
 	for entrypoint, pkg := range p.Entrypoint {
+		// key is package name, value is the dependent entrypoint
 		dependencies := make(map[string]*packageT)
 		WalkPackageDependencies(pkg, dependencies)
 		for k, _ := range dependencies {
@@ -291,13 +302,31 @@ func (p *project) GetAffectedEntrypoint(changed []string) ([]string, error) {
 	processed := make(map[string]struct{}, len(p.Entrypoint))
 	var result []string
 	for _, file := range changed {
-		filePkg := path.New(file).Dir()
+		pFile := path.New(file)
 
+		filePkg := pFile.Dir()
+		for k, _ := range p.Entrypoint {
+			hooks := p.Hooks[k]
+			for _, hook := range hooks {
+				if pFile.Match(hook) {
+					if _, exists := processed[k]; !exists {
+						result = append(result, k)
+						processed[k] = struct{}{}
+					}
+				}
+			}
+		}
 		// if the file affects entrypoint, add it to result
 		if entrypoints, exists := p.dependencies[filePkg.String()]; exists {
-
+		affected:
 			// record affected entrypoint
 			for _, point := range entrypoints {
+				ignores := p.Ignores[point]
+				for _, ignore := range ignores {
+					if pFile.Match(ignore) {
+						continue affected
+					}
+				}
 
 				// if the entrypoint has been processed, skip it
 				if _, exists := processed[point]; !exists {

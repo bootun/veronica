@@ -26,13 +26,13 @@ func TestParseConfig(t *testing.T) {
 					"api-gateway": &Service{
 						Name:       "api-gateway",
 						Entrypoint: "cmd/api-gateway",
-						Ignore:     []string{"xxx.go"},
+						Ignores:    []string{"xxx.go"},
 						Hooks:      []string{"a.file"},
 					},
 					"assets-manager": &Service{
 						Name:       "assets-manager",
 						Entrypoint: "cmd/assets-manager",
-						Ignore:     nil,
+						Ignores:    nil,
 						Hooks:      nil,
 					},
 				},
@@ -56,6 +56,7 @@ func TestParseConfig(t *testing.T) {
 		})
 	}
 }
+
 var configV01 = `
 version: 0.1.0
 services: 
