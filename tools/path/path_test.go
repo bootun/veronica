@@ -56,3 +56,72 @@ func TestRel(t *testing.T) {
 	}
 	t.Log(rel.String())
 }
+// go test -v -timeout 30s -run ^TestMatch$ github.com/bootun/veronica/tools/path
+func TestMatch(t *testing.T) {
+	type args struct {
+		pattern string
+		path    string
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{
+			name: "match-all-1",
+			args: args{
+				pattern: "**/*.go",
+				path:    "pkg/service/service.go",
+			},
+			want: true,
+		},
+		{
+			name: "match-all-2",
+			args: args{
+				pattern: "pkg/**",
+				path:    "pkg/service/service.go",
+			},
+			want: true,
+		},
+		{
+			name: "match-all-3",
+			args: args{
+				pattern: "pkg/*.go",
+				path:    "pkg/service/service.go",
+			},
+			want: false,
+		},
+		{
+			name: "match-all-4",
+			args: args{
+				pattern: "pkg/**/*.go",
+				path:    "pkg/service/service.go",
+			},
+			want: true,
+		},
+		{
+			name: "match-all-5",
+			args: args{
+				pattern: "**/service/**/*.go",
+				path:    "pkg/service/assets/service.go",
+			},
+			want: true,
+		},
+		{
+			name: "match-all-6",
+			args: args{
+				pattern: "**/service/*.go",
+				path:    "pkg/service/assets/service.go",
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := New(tt.args.path).Match(tt.args.pattern); got != tt.want {
+				t.Errorf("Match() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+}

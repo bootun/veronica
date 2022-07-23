@@ -1,7 +1,6 @@
 package config
 
 import (
-	"log"
 	"os"
 
 	"github.com/pkg/errors"
@@ -19,7 +18,7 @@ type Service struct {
 	Name string
 	// Entrypoint represent the main package of the service.
 	Entrypoint string   `yaml:"entrypoint"`
-	Ignore     []string `yaml:"ignore"`
+	Ignores    []string `yaml:"ignores"`
 	Hooks      []string `yaml:"hooks"`
 }
 
@@ -28,9 +27,6 @@ func parseConfig(b []byte) (*Config, error) {
 	config.Services = map[string]*Service{}
 	if err := yaml.Unmarshal(b, &config); err != nil {
 		return nil, err
-	}
-	for k, v := range config.Hooks {
-		log.Printf("%s: %s", k, v)
 	}
 	for k, v := range config.Services {
 		(*v).Name = k
