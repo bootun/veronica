@@ -8,8 +8,12 @@ Veronica
  - 项目使用go module
 
 ## 用法
-1. 在项目的根目录放置[veronica.yaml](./veronica_example.yaml)文件
-2. 切换至项目目录，输入以下代码:
+1. 安装veronica
+```bash
+go install github.com/bootun/veronica@latest
+```
+2. 在项目的根目录放置[veronica.yaml](./veronica_example.yaml)文件
+3. 切换至项目目录，输入以下代码:
 ```bash
 git log --name-only -1 --pretty=format:"" | veronica
 ```
@@ -18,7 +22,6 @@ git log --name-only -1 --pretty=format:"" | veronica
 <pre>
 改动了 pkg/apigateway/spec 包中的 pkg/apigateway/spec/api.swagger.json 文件,可能会影响这些包的构建:
     - cmd/api-gateway
-
 改动了 pkg/apigateway/spec 包中的 pkg/apigateway/spec/static.go 文件,可能会影响这些包的构建:
     - cmd/api-gateway
 
@@ -80,5 +83,6 @@ cmd/iam-cron
 `Veronica`取自钢铁侠的同名外太空支援系统，在你需要升级战甲时，只需要通知维罗妮卡，它就会将战甲的模块从外太空发送给你，重新组合后完成升级。
 
 ## 未来规划
- - 支持配置文件灵活配置
- - 成为CI/CD的一部分， 根据git commit中改动的文件， 结合配置文件，告知您哪些服务受影响，需要重新构建(已完成,但输出格式需优化)
+ - 分析项目完整的AST，将veronica的粒度控制在[源码级别](https://github.com/bootun/veronica/issues/11)
+## 相关阅读
+ - [基于大仓库的微服务差异化构建工具](https://mp.weixin.qq.com/s/XQqDyJyh1u6jU0PmUdS0LA)
