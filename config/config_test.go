@@ -50,7 +50,7 @@ func TestParseConfig(t *testing.T) {
 			}
 			if !tt.wantErr {
 				if !reflect.DeepEqual(got, tt.want) {
-					t.Errorf("parseConfig() = %v, want %v", got, tt.want)
+					t.Errorf("name: %s, parseConfig() = %v, want %v", tt.name, got, tt.want)
 				}
 			}
 		})
@@ -63,7 +63,7 @@ services:
   api-gateway:
     # main package
     entrypoint: cmd/api-gateway
-    ignore:
+    ignores:
       - xxx.go
     hooks:
       - a.file
