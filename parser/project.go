@@ -1,9 +1,9 @@
 package parser
 
 import (
+	"fmt"
 	"go/parser"
 	"go/token"
-	"log"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -277,17 +277,17 @@ func WalkPackageDependencies(pkg *packageT, dependencies map[string]*packageT) {
 
 func (p *project) ReportImpact(changed []string) {
 	if !p.parsed {
-		log.Printf("project not parsed")
+		fmt.Printf("project not parsed\n")
 		return
 	}
 	for _, file := range changed {
 		fileDir := path.New(file).Dir()
 		if entrypoints, exists := p.dependencies[fileDir.String()]; exists {
-			log.Printf("改动了 %s 包中的 %s 文件,可能会影响这些包的构建:\n", fileDir, file)
+			fmt.Printf("改动了 %s 包中的 %s 文件,可能会影响这些包的构建:\n", fileDir, file)
 			for _, pkg := range entrypoints {
-				log.Printf("    - %s", pkg)
+				fmt.Printf("    - %s", pkg)
 			}
-			log.Println()
+			fmt.Println()
 		}
 	}
 }
