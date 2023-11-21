@@ -13,9 +13,10 @@ Veronica
 go install github.com/bootun/veronica@latest
 ```
 2. 在项目的根目录放置[veronica.yaml](./veronica_example.yaml)文件
-3. 切换至项目目录，输入以下代码:
+3. 切换至项目目录，并运行veronica:
 ```bash
-git log --name-only -1 --pretty=format:"" | veronica
+cd $PROJECT_DIR
+veronica report .
 ```
 **详细输出效果:**  
 <details>
@@ -73,7 +74,12 @@ cmd/iam-cron
 </pre>
 </details>
 
-> 在0.0.2版本之后，默认输出精简模式，想要获取详细输出，需要在`veronica.go`中调用`project.ReportImpact()`并自行编译。目前我正在积极探索更加灵活的输出方式。
+## 可配置项
+
+**修改报告输出格式为文本**
+```shell
+veronica report --format=text .
+```
 
 ## 已实现功能
  - 解析所有文件/目录之间的依赖关系
