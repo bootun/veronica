@@ -166,7 +166,7 @@ func (p *project) IsParsed() bool {
 	return p.parsed
 }
 
-// ParseProject parse project dependencies
+// Parse parse project dependencies
 func (p *project) Parse() error {
 	projectPath := path.New(p.directory)
 	if !projectPath.IsDir() {
