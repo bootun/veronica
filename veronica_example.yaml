@@ -3,13 +3,16 @@ services:
   # every item is a service
   refresh_playlet_info:
     entrypoint: 'github.com/bootun/some-project/cmd/cron/refresh_playlet_info.go:NewRefreshPlayletInfoCronjob'
-    ignores:
-      - 'pkg/**/*doc.go'
-    hooks:
-      - '**/Makefile'
-      - 'go.mod'
+    
+    # the current version does not currently support it
+    #ignores:
+    #  - 'pkg/**/*doc.go'
+    #hooks:
+    #  - '**/Makefile'
+    #  - 'go.mod'
+
   update_playlet:
-    entrypoint: 'cmd/consumer/update_playlet.go:UpdatePlaylet'
+    entrypoint: 'github.com/bootun/some-project/cmd/consumer/update_playlet.go:UpdatePlaylet'
 
   # or gRPC interface
   GRPC_GetPlayletInfo:
