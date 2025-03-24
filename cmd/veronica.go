@@ -10,8 +10,8 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(versionCmd)
-	rootCmd.AddCommand(reportCmd)
 	rootCmd.AddCommand(dependencyCmd)
+	rootCmd.AddCommand(impactCmd)
 }
 
 func Execute() error {

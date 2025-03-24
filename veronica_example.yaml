@@ -1,21 +1,21 @@
-version: 0.1.1
+version: 1.0.0-alpha
 services: 
   # every item is a service
-  api-gateway:
-    # main package
-    entrypoint: cmd/api-gateway
+  refresh_playlet_info:
+    entrypoint: 'github.com/bootun/some-project/cmd/cron/refresh_playlet_info.go:NewRefreshPlayletInfoCronjob'
     ignores:
       - 'pkg/**/*doc.go'
     hooks:
       - '**/Makefile'
       - 'go.mod'
+  update_playlet:
+    entrypoint: 'cmd/consumer/update_playlet.go:UpdatePlaylet'
 
-  assets-manager:
-    entrypoint: cmd/assets-manager
-  
-  # the service name does not neeed to be the same as the entrypoint
-  assets-cron-deprecated:
-    entrypoint: cmd/assets-cron/v1
+  # or gRPC interface
+  GRPC_GetPlayletInfo:
+    entrypoint: "github.com/bootun/some-project/internal/server/grpc.go:(*PlayletServer).GetPlayletInfo"    
+  GRPC_BatchGetPlayletInfo:
+    entrypoint: "github.com/bootun/some-project/internal/server/grpc.go:(*PlayletServer).BatchGetPlayletInfo"
 
-  assets-cron-release:
-    entrypoint: cmd/assets-cron/v2
+  # or variable declare / type declare ...
+  # ...
