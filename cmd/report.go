@@ -57,7 +57,7 @@ var (
 	outputFormat string
 	oldCommit    string
 	newCommit    string
-	repo         string
+	repo         string // 仓库路径
 )
 
 const (

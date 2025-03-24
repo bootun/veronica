@@ -11,6 +11,7 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(reportCmd)
+	rootCmd.AddCommand(dependencyCmd)
 }
 
 func Execute() error {
