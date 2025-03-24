@@ -8,10 +8,10 @@ import (
 )
 
 type Config struct {
-	Version  string              `yaml:"version"`
+	Version  string             `yaml:"version"`
 	Services map[string]*Service `yaml:"services"`
-	GoMod    string              `yaml:"go.mod"`
-	Hooks    []string            `yaml:"hooks"`
+	GoMod    string             `yaml:"go.mod"`
+	Hooks    []string           `yaml:"hooks"`
 }
 
 type Service struct {
@@ -24,12 +24,12 @@ type Service struct {
 
 func parseConfig(b []byte) (*Config, error) {
 	var config Config
-	config.Services = map[string]*Service{}
+	config.Services = make(map[string]*Service)
 	if err := yaml.Unmarshal(b, &config); err != nil {
 		return nil, err
 	}
 	for k, v := range config.Services {
-		(*v).Name = k
+		v.Name = k
 	}
 	return &config, nil
 }

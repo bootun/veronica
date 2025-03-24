@@ -89,17 +89,7 @@ func (d *DependencyInfo) GetDependency(targetID string) ([]string, error) {
 }
 
 // BuildDependency 构建依赖关系图
-func BuildDependency(repoRoot string) (*DependencyInfo, error) {
-	// 加载包信息
-	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
-		Dir:  repoRoot,
-	}
-	pkgs, err := packages.Load(cfg, "./...")
-	if err != nil {
-		return nil, fmt.Errorf("parser project AST failed in %s: %v", repoRoot, err)
-	}
-
+func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 	// nodesMap：key: 对象, value: 节点唯一标识
 	// 项目内所有的顶级声明
 	nodesMap := make(map[types.Object]string)
@@ -245,7 +235,6 @@ func BuildDependency(repoRoot string) (*DependencyInfo, error) {
 			}
 		}
 	}
-
 
 	// key: 类型ID, value: 方法名 -> 节点ID
 	typeMethodsMap := make(map[string]map[string]string)
@@ -619,4 +608,17 @@ func signaturesCompatible(ifaceMethodSig, typeMethodSig *types.Signature) bool {
 	}
 
 	return true
+}
+
+func LoadPackages(repo string) ([]*packages.Package, error) {
+	// 加载包信息
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
+		Dir:  repo,
+	}
+	pkgs, err := packages.Load(cfg, "./...")
+	if err != nil {
+		return nil, fmt.Errorf("parser project AST failed in %s: %v", repo, err)
+	}
+	return pkgs, nil
 }

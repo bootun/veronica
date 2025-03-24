@@ -17,8 +17,11 @@ var dependencyCmd = &cobra.Command{
 			cmd.Usage()
 			os.Exit(1)
 		}
-
-		dependencyInfo, err := parser.BuildDependency(repo)
+		pkgs, err := parser.LoadPackages(repo)
+		if err != nil {
+			log.Fatalf("load packages: %s", err)
+		}
+		dependencyInfo, err := parser.BuildDependency(pkgs)
 		if err != nil {
 			log.Fatalf("build dependency: %s", err)
 		}
