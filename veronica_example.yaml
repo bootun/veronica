@@ -2,7 +2,7 @@ version: 1.0.0-alpha
 services: 
   # every item is a service
   refresh_playlet_info:
-    entrypoint: 'github.com/bootun/some-project/cmd/cron/refresh_playlet_info.go:NewRefreshPlayletInfoCronjob'
+    entrypoint: 'cmd/cron/refresh_playlet_info.go:NewRefreshPlayletInfoCronjob'
     
     # the current version does not currently support it
     #ignores:
@@ -12,13 +12,14 @@ services:
     #  - 'go.mod'
 
   update_playlet:
+    # or use the full package path
     entrypoint: 'github.com/bootun/some-project/cmd/consumer/update_playlet.go:UpdatePlaylet'
 
   # or gRPC interface
   GRPC_GetPlayletInfo:
-    entrypoint: "github.com/bootun/some-project/internal/server/grpc.go:(*PlayletServer).GetPlayletInfo"    
+    entrypoint: "internal/server/grpc.go:(*PlayletServer).GetPlayletInfo"    
   GRPC_BatchGetPlayletInfo:
-    entrypoint: "github.com/bootun/some-project/internal/server/grpc.go:(*PlayletServer).BatchGetPlayletInfo"
+    entrypoint: "internal/server/grpc.go:(*PlayletServer).BatchGetPlayletInfo"
 
   # or variable declare / type declare ...
   # ...
