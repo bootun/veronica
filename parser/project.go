@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"strings"
+
 	"github.com/pkg/errors"
 
 	"github.com/bootun/veronica/config"
@@ -40,19 +42,30 @@ func NewProject(root string) (*project, error) {
 	if err != nil {
 		return nil, errors.WithMessage(err, "failed to parse go.mod")
 	}
+	if module == nil {
+		return nil, errors.New("invalid go.mod file")
+	}
+	moduleName := module.Name
+	if moduleName == "" {
+		return nil, errors.New("invalid go.mod file, module name is empty")
+	}
 	services := make(map[string]Service)
 	// initialize entrypoint
 	ignores := make(map[string][]string)
 	hooks := make(map[string][]string)
 	for _, v := range cfg.Services {
-		fullRelPath := rootPath.Join(v.Entrypoint)
+		entrypoint := v.Entrypoint
+		if !strings.HasPrefix(entrypoint, moduleName) {
+			entrypoint = moduleName + "/" + entrypoint
+		}
+		fullRelPath := rootPath.Join(entrypoint)
 		relPath, err := fullRelPath.Rel(root)
 		if err != nil {
 			return nil, errors.WithMessage(err, "failed to get relative path")
 		}
-		services[v.Entrypoint] = Service{
+		services[entrypoint] = Service{
 			Name:       v.Name,
-			Entrypoint: v.Entrypoint,
+			Entrypoint: entrypoint,
 			Ignores:    v.Ignores,
 			Hooks:      v.Hooks,
 		}
