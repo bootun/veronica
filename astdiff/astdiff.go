@@ -586,7 +586,9 @@ func astNodesEqual(a, b ast.Node) bool {
 			}
 		}
 		return true
-
+	case *ast.TypeSwitchStmt:
+		y := b.(*ast.TypeSwitchStmt)
+		return astNodesEqual(x.Init, y.Init) && astNodesEqual(x.Assign, y.Assign) && astNodesEqual(x.Body, y.Body)
 	default:
 		panic(fmt.Sprintf("未处理的节点类型: %T, a: %v, b: %v\n", x, a, b))
 	}
