@@ -11,7 +11,7 @@ import (
 
 var dependencyCmd = &cobra.Command{
 	Use:   "dependency",
-	Short: "dependency",
+	Short: "object dependency analysis",
 	Run: func(cmd *cobra.Command, args []string) {
 		if targetID == "" {
 			cmd.Usage()
