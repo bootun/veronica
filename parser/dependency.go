@@ -189,6 +189,45 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 								graph[id] = make(map[string]struct{})
 							}
 
+							// 处理泛型类型参数
+							typeParams := make(map[string]*types.TypeParam)
+							if s.TypeParams != nil && len(s.TypeParams.List) > 0 {
+								for _, field := range s.TypeParams.List {
+									for _, name := range field.Names {
+										// 获取类型参数对象
+										typeParamObj := pkg.TypesInfo.Defs[name]
+										if typeParamObj == nil {
+											continue
+										}
+
+										// 转换为TypeParam类型
+										typeParam, ok := typeParamObj.Type().(*types.TypeParam)
+										if !ok {
+											continue
+										}
+
+										// 存储类型参数信息
+										typeParams[name.Name] = typeParam
+
+										// 处理类型参数之间的依赖关系
+										if field.Type != nil {
+											// 解析类型参数的约束，添加对其他类型的依赖
+											ast.Inspect(field.Type, func(n ast.Node) bool {
+												if ident, ok := n.(*ast.Ident); ok && ident.Name != name.Name {
+													// 获取约束中引用的类型
+													if refObj := pkg.TypesInfo.Uses[ident]; refObj != nil {
+														if depID, exists := nodesMap[refObj]; exists && depID != id {
+															graph[id][depID] = struct{}{}
+														}
+													}
+												}
+												return true
+											})
+										}
+									}
+								}
+							}
+
 							// 检查是否为接口定义
 							if t, ok := s.Type.(*ast.InterfaceType); ok {
 								// 记录接口信息
@@ -212,6 +251,25 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 											}
 
 											iface.Methods[name.Name] = methodFunc
+
+											// 处理方法中使用的泛型参数
+											ast.Inspect(method.Type, func(n ast.Node) bool {
+												if ident, ok := n.(*ast.Ident); ok {
+													// 检查是否引用了类型参数
+													if _, exists := typeParams[ident.Name]; exists {
+														// 方法使用了泛型参数，这里可以做额外处理
+														// 例如记录方法与泛型参数的关联
+													}
+
+													// 检查是否引用了其他类型
+													if refObj := pkg.TypesInfo.Uses[ident]; refObj != nil {
+														if depID, exists := nodesMap[refObj]; exists && depID != id {
+															graph[id][depID] = struct{}{}
+														}
+													}
+												}
+												return true
+											})
 										}
 									}
 								}
@@ -228,6 +286,19 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 								for methodName := range iface.Methods {
 									interfaceImpls.MethodImplementersMap[id][methodName] = []string{}
 								}
+							} else {
+								// 非接口类型定义，处理泛型类型参数在类型定义中的使用
+								ast.Inspect(s.Type, func(n ast.Node) bool {
+									if ident, ok := n.(*ast.Ident); ok {
+										// 检查是否引用了其他类型
+										if refObj := pkg.TypesInfo.Uses[ident]; refObj != nil {
+											if depID, exists := nodesMap[refObj]; exists && depID != id {
+												graph[id][depID] = struct{}{}
+											}
+										}
+									}
+									return true
+								})
 							}
 						}
 					}
@@ -235,10 +306,8 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 			}
 		}
 	}
-
 	// key: 类型ID, value: 方法名 -> 节点ID
 	typeMethodsMap := make(map[string]map[string]string)
-
 	// 提取所有类型的方法
 	for nodeID, node := range nodesInfo {
 		// 检查是否为方法声明（形如 (Type).Method 的名称）
@@ -320,7 +389,6 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 						if methodNode == nil || methodNode.Obj == nil {
 							continue
 						}
-
 						typeMethod, ok := methodNode.Obj.(*types.Func)
 						if !ok {
 							continue
@@ -398,6 +466,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 
 				// 查找右侧方法调用
 				methodName := sel.Sel.Name
+
 				// 检查对象类型是否是接口类型
 				_, isIface := objType.Underlying().(*types.Interface)
 
@@ -514,17 +583,6 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 		}
 	}
 
-	// 输出接口实现的信息（用于调试）
-	// fmt.Println("\n接口实现关系:")
-	// for ifaceID, impls := range interfaceImpls.ImplementersMap {
-	// 	if len(impls) > 0 {
-	// 		fmt.Printf("接口 %s 的实现类型:\n", ifaceID)
-	// 		for _, impl := range impls {
-	// 			fmt.Printf("  - %s\n", impl)
-	// 		}
-	// 	}
-	// }
-
 	// 构建反向图
 	revGraph := make(Graph)
 	for nodeID, deps := range graph {
@@ -572,6 +630,27 @@ func GetFuncOrMethodName(fn *ast.FuncDecl) string {
 
 // signaturesCompatible 检查类型方法的签名是否与接口方法的签名兼容
 func signaturesCompatible(ifaceMethodSig, typeMethodSig *types.Signature) bool {
+	// 检查接口方法是否有类型参数
+	ifaceHasTypeParams := ifaceMethodSig.TypeParams() != nil && ifaceMethodSig.TypeParams().Len() > 0
+
+	// 检查接收器是否有类型参数
+	ifaceHasRecvTypeParams := false
+	if recv := ifaceMethodSig.Recv(); recv != nil {
+		// 获取接收器类型
+		recvType := recv.Type()
+
+		// 检查是否是命名类型
+		if named, ok := recvType.(*types.Named); ok {
+			// 检查命名类型是否有类型参数
+			if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+				ifaceHasRecvTypeParams = true
+			}
+		}
+	}
+
+	// 如果接口方法有类型参数或接收器有类型参数，标记为泛型方法
+	hasGenericParams := ifaceHasTypeParams || ifaceHasRecvTypeParams
+
 	// 检查参数数量是否相同
 	if ifaceMethodSig.Params().Len() != typeMethodSig.Params().Len() {
 		return false
@@ -587,7 +666,139 @@ func signaturesCompatible(ifaceMethodSig, typeMethodSig *types.Signature) bool {
 		ifaceParam := ifaceMethodSig.Params().At(i)
 		typeParam := typeMethodSig.Params().At(i)
 
-		if !types.AssignableTo(typeParam.Type(), ifaceParam.Type()) {
+		ifaceParamType := ifaceParam.Type()
+		typeParamType := typeParam.Type()
+
+		// 如果接口有类型参数
+		if hasGenericParams {
+			// 检查参数本身是否是类型参数
+			_, isTypeParam := ifaceParamType.(*types.TypeParam)
+			if isTypeParam {
+				// 泛型类型参数可以匹配任何类型，跳过详细检查
+				continue
+			}
+
+			// 检查参数是否是包含泛型的复合类型
+
+			// 处理切片类型 []T
+			ifaceSlice, ifaceIsSlice := ifaceParamType.(*types.Slice)
+			_, typeIsSlice := typeParamType.(*types.Slice)
+			if ifaceIsSlice && typeIsSlice {
+				// 获取切片元素类型
+				ifaceElem := ifaceSlice.Elem()
+
+				// 检查元素是否是类型参数
+				_, elemIsTypeParam := ifaceElem.(*types.TypeParam)
+				if elemIsTypeParam {
+					// 如果接口参数是[]T，T是类型参数，则认为兼容任何切片类型
+					continue
+				}
+
+				// 检查是否是命名类型且包含类型参数
+				if named, ok := ifaceElem.(*types.Named); ok {
+					if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+						// 如果元素是泛型类型，也认为兼容
+						continue
+					}
+				}
+			}
+
+			// 处理map类型 map[K]V
+			ifaceMap, ifaceIsMap := ifaceParamType.(*types.Map)
+			_, typeIsMap := typeParamType.(*types.Map)
+			if ifaceIsMap && typeIsMap {
+				// 获取map的键和值类型
+				ifaceKey := ifaceMap.Key()
+				ifaceVal := ifaceMap.Elem()
+
+				// 检查键或值是否是类型参数
+				_, keyIsTypeParam := ifaceKey.(*types.TypeParam)
+				_, valIsTypeParam := ifaceVal.(*types.TypeParam)
+
+				// 检查键和值是否是命名类型且包含类型参数
+				keyHasGenericParams := false
+				valHasGenericParams := false
+
+				if named, ok := ifaceKey.(*types.Named); ok {
+					if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+						keyHasGenericParams = true
+					}
+				}
+
+				if named, ok := ifaceVal.(*types.Named); ok {
+					if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+						valHasGenericParams = true
+					}
+				}
+
+				// 如果键或值是类型参数或泛型类型，则认为兼容
+				if keyIsTypeParam || valIsTypeParam || keyHasGenericParams || valHasGenericParams {
+					continue
+				}
+			}
+
+			// 处理通道类型 chan T
+			ifaceChan, ifaceIsChan := ifaceParamType.(*types.Chan)
+			typeChan, typeIsChan := typeParamType.(*types.Chan)
+			if ifaceIsChan && typeIsChan {
+				// 获取通道元素类型
+				ifaceElem := ifaceChan.Elem()
+
+				// 检查元素是否是类型参数
+				_, elemIsTypeParam := ifaceElem.(*types.TypeParam)
+
+				// 检查是否是命名类型且包含类型参数
+				elemHasGenericParams := false
+				if named, ok := ifaceElem.(*types.Named); ok {
+					if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+						elemHasGenericParams = true
+					}
+				}
+
+				// 如果元素是类型参数或泛型类型，并且通道方向相同，则认为兼容
+				if (elemIsTypeParam || elemHasGenericParams) && (ifaceChan.Dir() == typeChan.Dir()) {
+					continue
+				}
+			}
+
+			// 处理指针类型 *T
+			ifacePtr, ifaceIsPtr := ifaceParamType.(*types.Pointer)
+			_, typeIsPtr := typeParamType.(*types.Pointer)
+			if ifaceIsPtr && typeIsPtr {
+				// 获取指针的基础类型
+				ifaceElem := ifacePtr.Elem()
+
+				// 检查基础类型是否是类型参数
+				_, elemIsTypeParam := ifaceElem.(*types.TypeParam)
+
+				// 检查是否是命名类型且包含类型参数
+				elemHasGenericParams := false
+				if named, ok := ifaceElem.(*types.Named); ok {
+					if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+						elemHasGenericParams = true
+					}
+				}
+
+				// 如果基础类型是类型参数或泛型类型，则认为兼容
+				if elemIsTypeParam || elemHasGenericParams {
+					continue
+				}
+			}
+
+			// 检查命名类型是否包含类型参数
+			if named, ok := ifaceParamType.(*types.Named); ok {
+				if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+					// 对于带有类型参数的命名类型，我们简化处理，认为兼容
+					continue
+				}
+			}
+		}
+
+		// 对于非泛型参数或未能识别的泛型场景，使用标准的类型赋值检查
+		if !types.AssignableTo(typeParamType, ifaceParamType) {
+			if hasGenericParams {
+				fmt.Printf("  类型不兼容: %v 不能赋值给 %v\n", typeParamType, ifaceParamType)
+			}
 			return false
 		}
 	}
@@ -597,7 +808,137 @@ func signaturesCompatible(ifaceMethodSig, typeMethodSig *types.Signature) bool {
 		ifaceResult := ifaceMethodSig.Results().At(i)
 		typeResult := typeMethodSig.Results().At(i)
 
-		if !types.AssignableTo(typeResult.Type(), ifaceResult.Type()) {
+		ifaceResultType := ifaceResult.Type()
+		typeResultType := typeResult.Type()
+
+		// 如果接口有类型参数
+		if hasGenericParams {
+			// 检查返回值是否是类型参数
+			_, isTypeParam := ifaceResultType.(*types.TypeParam)
+			if isTypeParam {
+				// 泛型类型参数可以匹配任何类型
+				continue
+			}
+
+			// 检查返回值是否是包含泛型的复合类型
+
+			// 处理切片类型 []T
+			ifaceSlice, ifaceIsSlice := ifaceResultType.(*types.Slice)
+			_, typeIsSlice := typeResultType.(*types.Slice)
+			if ifaceIsSlice && typeIsSlice {
+				// 获取切片元素类型
+				ifaceElem := ifaceSlice.Elem()
+
+				// 检查元素是否是类型参数
+				_, elemIsTypeParam := ifaceElem.(*types.TypeParam)
+
+				// 检查是否是命名类型且包含类型参数
+				elemHasGenericParams := false
+				if named, ok := ifaceElem.(*types.Named); ok {
+					if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+						elemHasGenericParams = true
+					}
+				}
+
+				// 如果元素是类型参数或泛型类型，则认为兼容
+				if elemIsTypeParam || elemHasGenericParams {
+					continue
+				}
+			}
+
+			// 处理map类型 map[K]V
+			ifaceMap, ifaceIsMap := ifaceResultType.(*types.Map)
+			_, typeIsMap := typeResultType.(*types.Map)
+			if ifaceIsMap && typeIsMap {
+				// 获取map的键和值类型
+				ifaceKey := ifaceMap.Key()
+				ifaceVal := ifaceMap.Elem()
+
+				// 检查键或值是否是类型参数
+				_, keyIsTypeParam := ifaceKey.(*types.TypeParam)
+				_, valIsTypeParam := ifaceVal.(*types.TypeParam)
+
+				// 检查键和值是否是命名类型且包含类型参数
+				keyHasGenericParams := false
+				valHasGenericParams := false
+
+				if named, ok := ifaceKey.(*types.Named); ok {
+					if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+						keyHasGenericParams = true
+					}
+				}
+
+				if named, ok := ifaceVal.(*types.Named); ok {
+					if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+						valHasGenericParams = true
+					}
+				}
+
+				// 如果键或值是类型参数或泛型类型，则认为兼容
+				if keyIsTypeParam || valIsTypeParam || keyHasGenericParams || valHasGenericParams {
+					continue
+				}
+			}
+
+			// 处理通道类型 chan T
+			ifaceChan, ifaceIsChan := ifaceResultType.(*types.Chan)
+			typeChan, typeIsChan := typeResultType.(*types.Chan)
+			if ifaceIsChan && typeIsChan {
+				// 获取通道元素类型
+				ifaceElem := ifaceChan.Elem()
+
+				// 检查元素是否是类型参数
+				_, elemIsTypeParam := ifaceElem.(*types.TypeParam)
+
+				// 检查是否是命名类型且包含类型参数
+				elemHasGenericParams := false
+				if named, ok := ifaceElem.(*types.Named); ok {
+					if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+						elemHasGenericParams = true
+					}
+				}
+
+				// 如果元素是类型参数或泛型类型，并且通道方向相同，则认为兼容
+				if (elemIsTypeParam || elemHasGenericParams) && (ifaceChan.Dir() == typeChan.Dir()) {
+					continue
+				}
+			}
+
+			// 处理指针类型 *T
+			ifacePtr, ifaceIsPtr := ifaceResultType.(*types.Pointer)
+			_, typeIsPtr := typeResultType.(*types.Pointer)
+			if ifaceIsPtr && typeIsPtr {
+				// 获取指针的基础类型
+				ifaceElem := ifacePtr.Elem()
+
+				// 检查基础类型是否是类型参数
+				_, elemIsTypeParam := ifaceElem.(*types.TypeParam)
+
+				// 检查是否是命名类型且包含类型参数
+				elemHasGenericParams := false
+				if named, ok := ifaceElem.(*types.Named); ok {
+					if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+						elemHasGenericParams = true
+					}
+				}
+
+				// 如果基础类型是类型参数或泛型类型，则认为兼容
+				if elemIsTypeParam || elemHasGenericParams {
+					continue
+				}
+			}
+
+			// 检查命名类型是否包含类型参数
+			if named, ok := ifaceResultType.(*types.Named); ok {
+				if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+					// 对于带有类型参数的命名类型，我们简化处理，认为兼容
+					continue
+				}
+			}
+		}
+
+		// 对于非泛型返回值或未能识别的泛型场景，使用标准的类型赋值检查
+		if !types.AssignableTo(typeResultType, ifaceResultType) {
 			return false
 		}
 	}
