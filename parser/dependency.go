@@ -27,9 +27,9 @@ type interfaceInfo struct {
 
 // interfaceImplementations 存储接口和实现类型的映射关系
 type interfaceImplementations struct {
-	// 接口ID -> 实现该接口的类型ID列表
+	// InterfaceID -> 实现该接口的类型ID列表
 	ImplementersMap map[string][]string
-	// 接口ID -> 接口方法名称 -> 实现该方法的类型ID列表
+	// InterfaceID -> 接口方法名称 -> 实现该方法的类型ID列表
 	MethodImplementersMap map[string]map[string][]string
 }
 
@@ -54,7 +54,7 @@ func GetObjectID(pkg string, fileName string, obj string) string {
 type DependencyInfo struct {
 	// 项目内所有的顶级声明, key: NodeID, value: Node
 	nodes map[string]*node
-	// 依赖图的反向图, key: 依赖的节点ID, value: 集合（set）内存放被依赖的节点ID
+	// 依赖图的反向图, key: NodeID, value: 依赖key的NodeID列表
 	revGraph Graph
 }
 
@@ -64,11 +64,10 @@ func (d *DependencyInfo) GetDependency(targetID string) ([]string, error) {
 		return nil, fmt.Errorf("target %s is not defined in project", targetID)
 	}
 
-	// 利用深度优先搜索（DFS）查找所有直接或间接依赖 targetID 的节点
 	visited := make(map[string]struct{})
 	var dfs func(string)
 	dfs = func(node string) {
-		for dep, _ := range d.revGraph[node] {
+		for dep := range d.revGraph[node] {
 			if _, ok := visited[dep]; !ok {
 				visited[dep] = struct{}{}
 				dfs(dep)
@@ -76,10 +75,6 @@ func (d *DependencyInfo) GetDependency(targetID string) ([]string, error) {
 		}
 	}
 	dfs(targetID)
-
-	if len(visited) == 0 {
-		return []string{}, nil
-	}
 
 	deps := make([]string, 0, len(visited))
 	for id := range visited {
@@ -98,7 +93,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 	nodesInfo := make(map[string]*node)
 
 	// 所有接口信息
-	// key: 接口的fullName表示, value: 接口信息
+	// key: InterfaceID, value: 接口信息
 	interfacesInfo := make(map[string]*interfaceInfo)
 
 	// 接口与实现类型的映射关系
@@ -107,15 +102,15 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 		MethodImplementersMap: make(map[string]map[string][]string),
 	}
 
-	// 依赖图: key->当前节点ID, value->集合（set）内存放依赖的节点ID
+	// 依赖图: key->NodeID, value->依赖Key的NodeID列表
 	graph := make(Graph)
 
 	// 遍历所有包和文件，提取顶级声明，构建接口表
 	for _, pkg := range pkgs {
 		fset := pkg.Fset
 		for _, file := range pkg.Syntax {
-			fullFilename := fset.File(file.Pos()).Name() // 文件的绝对路径
-			baseFilename := filepath.Base(fullFilename)  // 文件名
+			fullFilename := fset.File(file.Pos()).Name()
+			baseFilename := filepath.Base(fullFilename)
 			// 遍历文件中的所有顶级声明
 			for _, decl := range file.Decls {
 				switch d := decl.(type) {
@@ -153,6 +148,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 									continue
 								}
 								id := GetObjectID(pkg.ID, baseFilename, ident.Name)
+								
 								obj := pkg.TypesInfo.Defs[ident]
 								if obj == nil {
 									continue
@@ -429,6 +425,93 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 	// 辅助函数：处理一个AST节点（函数体或变量初始化表达式）来查找依赖的顶级对象
 	collectDependencies := func(n ast.Node, curNodeID string, pkg *packages.Package) {
 		ast.Inspect(n, func(n ast.Node) bool {
+			// 处理类型转换和类型断言
+			if typeAssert, ok := n.(*ast.TypeAssertExpr); ok {
+				if typeAssert.Type != nil {
+					ast.Inspect(typeAssert.Type, func(n ast.Node) bool {
+						if ident, ok := n.(*ast.Ident); ok {
+							if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
+								if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
+									graph[curNodeID][depID] = struct{}{}
+								}
+							}
+						}
+						return true
+					})
+				}
+			}
+
+			// 处理结构体字面量
+			if compLit, ok := n.(*ast.CompositeLit); ok {
+				if compLit.Type != nil {
+					ast.Inspect(compLit.Type, func(n ast.Node) bool {
+						if ident, ok := n.(*ast.Ident); ok {
+							if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
+								if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
+									graph[curNodeID][depID] = struct{}{}
+								}
+							}
+						}
+						return true
+					})
+				}
+				// 处理结构体字段
+				for _, elt := range compLit.Elts {
+					if kv, ok := elt.(*ast.KeyValueExpr); ok {
+						if ident, ok := kv.Key.(*ast.Ident); ok {
+							if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
+								if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
+									graph[curNodeID][depID] = struct{}{}
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// 处理函数类型（包括参数和返回值）
+			if funcType, ok := n.(*ast.FuncType); ok {
+				// 处理参数
+				if funcType.Params != nil {
+					for _, field := range funcType.Params.List {
+						ast.Inspect(field.Type, func(n ast.Node) bool {
+							if ident, ok := n.(*ast.Ident); ok {
+								if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
+									if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
+										graph[curNodeID][depID] = struct{}{}
+									}
+								}
+							}
+							return true
+						})
+					}
+				}
+				// 处理返回值
+				if funcType.Results != nil {
+					for _, field := range funcType.Results.List {
+						ast.Inspect(field.Type, func(n ast.Node) bool {
+							if ident, ok := n.(*ast.Ident); ok {
+								if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
+									if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
+										graph[curNodeID][depID] = struct{}{}
+									}
+								}
+							}
+							return true
+						})
+					}
+				}
+			}
+
+			// 处理标签
+			if label, ok := n.(*ast.LabeledStmt); ok {
+				if obj := pkg.TypesInfo.Defs[label.Label]; obj != nil {
+					if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
+						graph[curNodeID][depID] = struct{}{}
+					}
+				}
+			}
+
 			// 处理选择器表达式（如 a.b 形式的调用）
 			if sel, ok := n.(*ast.SelectorExpr); ok {
 				var obj types.Object
@@ -474,6 +557,135 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 				if !isIface {
 					if ptr, ok := objType.(*types.Pointer); ok {
 						_, isIface = ptr.Elem().Underlying().(*types.Interface)
+					}
+				}
+
+				// 检查是否是泛型方法调用
+				if methodType, ok := pkg.TypesInfo.Types[sel].Type.(*types.Signature); ok {
+					// 处理泛型方法的类型参数
+					if methodType.TypeParams() != nil && methodType.TypeParams().Len() > 0 {
+						// 处理泛型方法的类型参数
+						for i := 0; i < methodType.TypeParams().Len(); i++ {
+							typeParam := methodType.TypeParams().At(i)
+							if depID, ok := nodesMap[typeParam.Obj()]; ok && depID != curNodeID {
+								graph[curNodeID][depID] = struct{}{}
+							}
+						}
+					}
+
+					// 处理泛型方法的约束
+					if methodType.TypeParams() != nil && methodType.TypeParams().Len() > 0 {
+						for i := 0; i < methodType.TypeParams().Len(); i++ {
+							typeParam := methodType.TypeParams().At(i)
+							// 获取类型参数的约束
+							if constraint := typeParam.Constraint(); constraint != nil {
+								// 处理约束中的类型
+								ast.Inspect(sel, func(n ast.Node) bool {
+									if ident, ok := n.(*ast.Ident); ok {
+										if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
+											if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
+												graph[curNodeID][depID] = struct{}{}
+											}
+										}
+									}
+									return true
+								})
+							}
+						}
+					}
+
+					// 处理泛型方法的接收器
+					if recv := methodType.Recv(); recv != nil {
+						recvType := recv.Type()
+						// 处理指针接收器
+						if ptr, ok := recvType.(*types.Pointer); ok {
+							recvType = ptr.Elem()
+						}
+						// 处理命名类型
+						if named, ok := recvType.(*types.Named); ok {
+							// 处理接收器类型的类型参数
+							if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+								for i := 0; i < named.TypeParams().Len(); i++ {
+									typeParam := named.TypeParams().At(i)
+									if depID, ok := nodesMap[typeParam.Obj()]; ok && depID != curNodeID {
+										graph[curNodeID][depID] = struct{}{}
+									}
+								}
+							}
+							// 处理接收器类型本身
+							if depID, ok := nodesMap[named.Obj()]; ok && depID != curNodeID {
+								graph[curNodeID][depID] = struct{}{}
+							}
+						}
+					}
+				}
+
+				// 处理泛型方法的调用参数
+				if call, ok := sel.X.(*ast.CallExpr); ok {
+					// 处理调用参数中的类型
+					for _, arg := range call.Args {
+						ast.Inspect(arg, func(n ast.Node) bool {
+							if ident, ok := n.(*ast.Ident); ok {
+								if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
+									if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
+										graph[curNodeID][depID] = struct{}{}
+									}
+								}
+							}
+							return true
+						})
+					}
+				}
+
+				// 处理泛型方法的类型参数使用
+				if methodType, ok := pkg.TypesInfo.Types[sel].Type.(*types.Signature); ok {
+					// 处理参数中的类型参数使用
+					if methodType.Params() != nil {
+						for i := 0; i < methodType.Params().Len(); i++ {
+							param := methodType.Params().At(i)
+							paramType := param.Type()
+							// 检查参数类型是否是类型参数
+							if typeParam, ok := paramType.(*types.TypeParam); ok {
+								if depID, ok := nodesMap[typeParam.Obj()]; ok && depID != curNodeID {
+									graph[curNodeID][depID] = struct{}{}
+								}
+							}
+							// 检查参数类型是否包含类型参数
+							if named, ok := paramType.(*types.Named); ok {
+								if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+									for j := 0; j < named.TypeParams().Len(); j++ {
+										typeParam := named.TypeParams().At(j)
+										if depID, ok := nodesMap[typeParam.Obj()]; ok && depID != curNodeID {
+											graph[curNodeID][depID] = struct{}{}
+										}
+									}
+								}
+							}
+						}
+					}
+					// 处理返回值中的类型参数使用
+					if methodType.Results() != nil {
+						for i := 0; i < methodType.Results().Len(); i++ {
+							result := methodType.Results().At(i)
+							resultType := result.Type()
+							// 检查返回值类型是否是类型参数
+							if typeParam, ok := resultType.(*types.TypeParam); ok {
+								if depID, ok := nodesMap[typeParam.Obj()]; ok && depID != curNodeID {
+									graph[curNodeID][depID] = struct{}{}
+								}
+							}
+							// 检查返回值类型是否包含类型参数
+							if named, ok := resultType.(*types.Named); ok {
+								if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+									for j := 0; j < named.TypeParams().Len(); j++ {
+										typeParam := named.TypeParams().At(j)
+										if depID, ok := nodesMap[typeParam.Obj()]; ok && depID != curNodeID {
+											graph[curNodeID][depID] = struct{}{}
+										}
+									}
+								}
+							}
+						}
 					}
 				}
 
@@ -540,6 +752,12 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 			if obj == nil {
 				return true
 			}
+			// 如果obj是函数，则获取其原始函数
+			if f, ok := obj.(*types.Func); ok {
+				if f.Origin() != nil {
+					obj = f.Origin()
+				}
+			}
 			// 判断这个对象是否在我们的顶级声明中（只考虑同一项目内部）
 			if depID, ok := nodesMap[obj]; ok {
 				// 避免自引用
@@ -564,6 +782,55 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 					}
 					funcName := GetFuncOrMethodName(d)
 					curID := GetObjectID(pkg.ID, baseFilename, funcName)
+
+					// 处理函数参数
+					if d.Type.Params != nil {
+						for _, field := range d.Type.Params.List {
+							ast.Inspect(field.Type, func(n ast.Node) bool {
+								if ident, ok := n.(*ast.Ident); ok {
+									if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
+										if depID, ok := nodesMap[obj]; ok && depID != curID {
+											graph[curID][depID] = struct{}{}
+										}
+									}
+								}
+								return true
+							})
+						}
+					}
+
+					// 处理函数返回值
+					if d.Type.Results != nil {
+						for _, field := range d.Type.Results.List {
+							ast.Inspect(field.Type, func(n ast.Node) bool {
+								if ident, ok := n.(*ast.Ident); ok {
+									if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
+										if depID, ok := nodesMap[obj]; ok && depID != curID {
+											graph[curID][depID] = struct{}{}
+										}
+									}
+								}
+								return true
+							})
+						}
+					}
+
+					// 处理函数接收器
+					if d.Recv != nil && len(d.Recv.List) > 0 {
+						for _, field := range d.Recv.List {
+							ast.Inspect(field.Type, func(n ast.Node) bool {
+								if ident, ok := n.(*ast.Ident); ok {
+									if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
+										if depID, ok := nodesMap[obj]; ok && depID != curID {
+											graph[curID][depID] = struct{}{}
+										}
+									}
+								}
+								return true
+							})
+						}
+					}
+					// 处理函数体
 					collectDependencies(d.Body, curID, pkg)
 				case *ast.GenDecl:
 					for _, spec := range d.Specs {
@@ -797,7 +1064,8 @@ func signaturesCompatible(ifaceMethodSig, typeMethodSig *types.Signature) bool {
 		// 对于非泛型参数或未能识别的泛型场景，使用标准的类型赋值检查
 		if !types.AssignableTo(typeParamType, ifaceParamType) {
 			if hasGenericParams {
-				fmt.Printf("  类型不兼容: %v 不能赋值给 %v\n", typeParamType, ifaceParamType)
+				//panic(fmt.Sprintf("类型不兼容: %v 不能赋值给 %v", typeParamType, ifaceParamType))
+				return false
 			}
 			return false
 		}
@@ -944,15 +1212,10 @@ func signaturesCompatible(ifaceMethodSig, typeMethodSig *types.Signature) bool {
 	}
 
 	// 检查可变参数特性是否一致
-	if ifaceMethodSig.Variadic() != typeMethodSig.Variadic() {
-		return false
-	}
-
-	return true
+	return ifaceMethodSig.Variadic() == typeMethodSig.Variadic()
 }
 
 func LoadPackages(repo string) ([]*packages.Package, error) {
-	// 加载包信息
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
 		Dir:  repo,
