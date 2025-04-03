@@ -1,4 +1,5 @@
-version: 1.0.0-alpha
+version: '1.0.0'
+  
 services: 
   # every item is a service
   refresh_playlet_info:

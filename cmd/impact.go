@@ -30,7 +30,6 @@ var impactCmd = &cobra.Command{
 }
 
 var (
-	outputFormat string // 输出格式(json, text)
 	oldCommit    string
 	newCommit    string
 	repo         string // 仓库路径
@@ -38,9 +37,6 @@ var (
 )
 
 const (
-	OutputFormatJson = "json"
-	OutputFormatText = "text"
-
 	ScopeAll     = "all"
 	ScopeService = "service"
 )
@@ -50,7 +46,6 @@ func init() {
 	impactCmd.Flags().StringVarP(&newCommit, "new", "n", "", "new commit")
 	impactCmd.Flags().StringVarP(&repo, "repo", "r", ".", "repo path")
 	impactCmd.Flags().StringVarP(&scope, "scope", "s", ScopeAll, "report scope, options: all, service")
-	impactCmd.Flags().StringVarP(&outputFormat, "format", "f", OutputFormatJson, "output format, options: json, text")
 }
 
 func Impact(oldCommit, newCommit string) {
