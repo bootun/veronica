@@ -19,18 +19,18 @@ type node struct {
 	Obj  types.Object
 }
 
-// interfaceInfo 存储接口相关信息
+// interfaceInfo store interface related information
 type interfaceInfo struct {
-	// key: 方法名称, value: 方法签名
-	Methods map[string]*types.Func
+	// key: method name, value: method signature
+	Methods map[string]*methodInfo
+	// all node ids that implements this interface
+	Implements []string
 }
 
-// interfaceImplementations 存储接口和实现类型的映射关系
-type interfaceImplementations struct {
-	// InterfaceID -> 实现该接口的类型ID列表
-	ImplementersMap map[string][]string
-	// InterfaceID -> 接口方法名称 -> 实现该方法的类型ID列表
-	MethodImplementersMap map[string]map[string][]string
+type methodInfo struct {
+	Method *types.Func
+	// all node ids that implements this method
+	ImplementMethods []string
 }
 
 // Graph 存储节点之间的依赖关系，边表示"当前节点依赖于另一个节点"
@@ -49,6 +49,24 @@ func GetObjectID(pkg string, fileName string, obj string) string {
 		panic("obj is empty")
 	}
 	return fmt.Sprintf("%s/%s:%s", pkg, fileName, obj)
+}
+
+func GetNodeId(pkg *packages.Package, node ast.Node) string {
+	fset := pkg.Fset
+	fullFilename := fset.File(node.Pos()).Name()
+	baseFilename := filepath.Base(fullFilename)
+	switch n := node.(type) {
+	case *ast.FuncDecl:
+		funcName := GetFuncOrMethodName(n)
+		return GetObjectID(pkg.ID, baseFilename, funcName)
+	case *ast.ValueSpec:
+		return GetObjectID(pkg.ID, baseFilename, n.Names[0].Name)
+	case *ast.TypeSpec:
+		return GetObjectID(pkg.ID, baseFilename, n.Name.Name)
+	default:
+		panic(fmt.Sprintf("unsupported node type: %T", n))
+	}
+	return ""
 }
 
 type DependencyInfo struct {
@@ -92,15 +110,8 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 	// key: NodeID, value: Node
 	nodesInfo := make(map[string]*node)
 
-	// 所有接口信息
 	// key: InterfaceID, value: 接口信息
-	interfacesInfo := make(map[string]*interfaceInfo)
-
-	// 接口与实现类型的映射关系
-	interfaceImpls := &interfaceImplementations{
-		ImplementersMap:       make(map[string][]string),
-		MethodImplementersMap: make(map[string]map[string][]string),
-	}
+	interfaceMap := make(map[string]*interfaceInfo)
 
 	// 依赖图: key->NodeID, value->依赖Key的NodeID列表
 	graph := make(Graph)
@@ -114,13 +125,12 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 			// 遍历文件中的所有顶级声明
 			for _, decl := range file.Decls {
 				switch d := decl.(type) {
+				// function or method
 				case *ast.FuncDecl:
-					// 函数或者方法
 					if d.Name == nil {
 						continue
 					}
 					funcName := GetFuncOrMethodName(d)
-					// 节点唯一标识
 					id := GetObjectID(pkg.ID, baseFilename, funcName)
 					obj := pkg.TypesInfo.Defs[d.Name]
 					if obj == nil {
@@ -133,22 +143,18 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 						Name: funcName,
 						Obj:  obj,
 					}
-					// 初始化依赖图节点
-					if _, ok := graph[id]; !ok {
-						graph[id] = make(map[string]struct{})
-					}
+
+				// constant, type or variable declaration
 				case *ast.GenDecl:
-					// 变量、常量、类型定义等
 					for _, spec := range d.Specs {
 						switch s := spec.(type) {
+						// constant or variable declaration
 						case *ast.ValueSpec:
-							// 可能是变量或常量定义，可能有多个名字
 							for _, ident := range s.Names {
 								if ident == nil {
 									continue
 								}
 								id := GetObjectID(pkg.ID, baseFilename, ident.Name)
-								
 								obj := pkg.TypesInfo.Defs[ident]
 								if obj == nil {
 									continue
@@ -160,12 +166,10 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 									Name: ident.Name,
 									Obj:  obj,
 								}
-								if _, ok := graph[id]; !ok {
-									graph[id] = make(map[string]struct{})
-								}
 							}
+
+						// type declaration
 						case *ast.TypeSpec:
-							// 类型定义
 							if s.Name == nil {
 								continue
 							}
@@ -181,11 +185,8 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 								Name: s.Name.Name,
 								Obj:  obj,
 							}
-							if _, ok := graph[id]; !ok {
-								graph[id] = make(map[string]struct{})
-							}
 
-							// 处理泛型类型参数
+							// handle type parameters(generic type)
 							typeParams := make(map[string]*types.TypeParam)
 							if s.TypeParams != nil && len(s.TypeParams.List) > 0 {
 								for _, field := range s.TypeParams.List {
@@ -213,7 +214,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 													// 获取约束中引用的类型
 													if refObj := pkg.TypesInfo.Uses[ident]; refObj != nil {
 														if depID, exists := nodesMap[refObj]; exists && depID != id {
-															graph[id][depID] = struct{}{}
+															addDependency(graph, id, depID)
 														}
 													}
 												}
@@ -226,62 +227,12 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 
 							// 检查是否为接口定义
 							if t, ok := s.Type.(*ast.InterfaceType); ok {
-								// 记录接口信息
-								iface := &interfaceInfo{
-									Methods: make(map[string]*types.Func),
-								}
-
-								// 提取接口方法
-								if t.Methods != nil {
-									for _, method := range t.Methods.List {
-										for _, name := range method.Names {
-											// 获取方法对象及其签名
-											methodObj := pkg.TypesInfo.Defs[name]
-											if methodObj == nil {
-												continue
-											}
-
-											methodFunc, ok := methodObj.(*types.Func)
-											if !ok {
-												continue
-											}
-
-											iface.Methods[name.Name] = methodFunc
-
-											// 处理方法中使用的泛型参数
-											ast.Inspect(method.Type, func(n ast.Node) bool {
-												if ident, ok := n.(*ast.Ident); ok {
-													// 检查是否引用了类型参数
-													if _, exists := typeParams[ident.Name]; exists {
-														// 方法使用了泛型参数，这里可以做额外处理
-														// 例如记录方法与泛型参数的关联
-													}
-
-													// 检查是否引用了其他类型
-													if refObj := pkg.TypesInfo.Uses[ident]; refObj != nil {
-														if depID, exists := nodesMap[refObj]; exists && depID != id {
-															graph[id][depID] = struct{}{}
-														}
-													}
-												}
-												return true
-											})
-										}
-									}
-								}
-
-								// 排除空接口 (interface{})
-								if len(iface.Methods) == 0 {
+								iface := parseAstInterfaceType(pkg, t)
+								if iface == nil {
 									continue
 								}
+								interfaceMap[id] = iface
 
-								interfacesInfo[id] = iface
-
-								// 初始化接口方法实现映射
-								interfaceImpls.MethodImplementersMap[id] = make(map[string][]string)
-								for methodName := range iface.Methods {
-									interfaceImpls.MethodImplementersMap[id][methodName] = []string{}
-								}
 							} else {
 								// 非接口类型定义，处理泛型类型参数在类型定义中的使用
 								ast.Inspect(s.Type, func(n ast.Node) bool {
@@ -289,7 +240,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 										// 检查是否引用了其他类型
 										if refObj := pkg.TypesInfo.Uses[ident]; refObj != nil {
 											if depID, exists := nodesMap[refObj]; exists && depID != id {
-												graph[id][depID] = struct{}{}
+												addDependency(graph, id, depID)
 											}
 										}
 									}
@@ -333,94 +284,9 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 		}
 	}
 
-	// 遍历所有顶层声明，组装接口表
-	for nodeID, node := range nodesInfo {
-		if node.Obj == nil {
-			continue
-		}
-
-		// 只处理类型声明
-		typeNameObj, ok := node.Obj.(*types.TypeName)
-		if !ok {
-			continue
-		}
-
-		typeObj := typeNameObj.Type()
-		if typeObj == nil {
-			continue
-		}
-
-		// 确保是命名类型
-		if _, ok := typeObj.(*types.Named); !ok {
-			continue
-		}
-
-		// 判断这个类型是否实现了任何接口
-		for ifaceID, ifaceInfo := range interfacesInfo {
-			// 跳过自身
-			if ifaceID == nodeID {
-				continue
-			}
-
-			// 记录实现了接口的哪些方法
-			implemented := make(map[string]bool)
-
-			// 检查这个类型是否实现了接口的所有方法
-			allImplemented := true
-			for methodName, ifaceMethod := range ifaceInfo.Methods {
-				// 检查类型是否有这个方法
-				methodFound := false
-
-				// 获取接口方法签名
-				ifaceMethodSig, ok := ifaceMethod.Type().(*types.Signature)
-				if !ok {
-					continue
-				}
-
-				// 查找类型的方法集合中是否包含此方法
-				if methods, ok := typeMethodsMap[nodeID]; ok {
-					if methodID, found := methods[methodName]; found {
-						// 获取类型方法对象
-						methodNode := nodesInfo[methodID]
-						if methodNode == nil || methodNode.Obj == nil {
-							continue
-						}
-						typeMethod, ok := methodNode.Obj.(*types.Func)
-						if !ok {
-							continue
-						}
-
-						// 获取类型方法签名
-						typeMethodSig, ok := typeMethod.Type().(*types.Signature)
-						if !ok {
-							continue
-						}
-
-						// 检查方法签名是否匹配
-						if signaturesCompatible(ifaceMethodSig, typeMethodSig) {
-							methodFound = true
-							// 记录该类型实现了接口的这个方法
-							interfaceImpls.MethodImplementersMap[ifaceID][methodName] = append(
-								interfaceImpls.MethodImplementersMap[ifaceID][methodName],
-								methodID,
-							)
-							implemented[methodName] = true
-						}
-					}
-				}
-
-				if !methodFound {
-					// 如果缺少任何方法或签名不匹配，则不完全实现接口
-					allImplemented = false
-					break
-				}
-			}
-
-			// 如果实现了所有方法，则记录为接口的实现者
-			if allImplemented && len(implemented) == len(ifaceInfo.Methods) {
-				interfaceImpls.ImplementersMap[ifaceID] = append(interfaceImpls.ImplementersMap[ifaceID], nodeID)
-			}
-		}
+	err := parseInterfaceImplementations(nodesInfo, interfaceMap, typeMethodsMap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse interface implementations: %w", err)
 	}
 	// 辅助函数：处理一个AST节点（函数体或变量初始化表达式）来查找依赖的顶级对象
 	collectDependencies := func(n ast.Node, curNodeID string, pkg *packages.Package) {
@@ -432,7 +298,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 						if ident, ok := n.(*ast.Ident); ok {
 							if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
 								if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
-									graph[curNodeID][depID] = struct{}{}
+									addDependency(graph, curNodeID, depID)
 								}
 							}
 						}
@@ -448,7 +314,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 						if ident, ok := n.(*ast.Ident); ok {
 							if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
 								if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
-									graph[curNodeID][depID] = struct{}{}
+									addDependency(graph, curNodeID, depID)
 								}
 							}
 						}
@@ -461,7 +327,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 						if ident, ok := kv.Key.(*ast.Ident); ok {
 							if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
 								if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
-									graph[curNodeID][depID] = struct{}{}
+									addDependency(graph, curNodeID, depID)
 								}
 							}
 						}
@@ -478,7 +344,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 							if ident, ok := n.(*ast.Ident); ok {
 								if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
 									if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
-										graph[curNodeID][depID] = struct{}{}
+										addDependency(graph, curNodeID, depID)
 									}
 								}
 							}
@@ -493,7 +359,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 							if ident, ok := n.(*ast.Ident); ok {
 								if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
 									if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
-										graph[curNodeID][depID] = struct{}{}
+										addDependency(graph, curNodeID, depID)
 									}
 								}
 							}
@@ -507,7 +373,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 			if label, ok := n.(*ast.LabeledStmt); ok {
 				if obj := pkg.TypesInfo.Defs[label.Label]; obj != nil {
 					if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
-						graph[curNodeID][depID] = struct{}{}
+						addDependency(graph, curNodeID, depID)
 					}
 				}
 			}
@@ -568,7 +434,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 						for i := 0; i < methodType.TypeParams().Len(); i++ {
 							typeParam := methodType.TypeParams().At(i)
 							if depID, ok := nodesMap[typeParam.Obj()]; ok && depID != curNodeID {
-								graph[curNodeID][depID] = struct{}{}
+								addDependency(graph, curNodeID, depID)
 							}
 						}
 					}
@@ -584,7 +450,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 									if ident, ok := n.(*ast.Ident); ok {
 										if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
 											if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
-												graph[curNodeID][depID] = struct{}{}
+												addDependency(graph, curNodeID, depID)
 											}
 										}
 									}
@@ -608,13 +474,13 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 								for i := 0; i < named.TypeParams().Len(); i++ {
 									typeParam := named.TypeParams().At(i)
 									if depID, ok := nodesMap[typeParam.Obj()]; ok && depID != curNodeID {
-										graph[curNodeID][depID] = struct{}{}
+										addDependency(graph, curNodeID, depID)
 									}
 								}
 							}
 							// 处理接收器类型本身
 							if depID, ok := nodesMap[named.Obj()]; ok && depID != curNodeID {
-								graph[curNodeID][depID] = struct{}{}
+								addDependency(graph, curNodeID, depID)
 							}
 						}
 					}
@@ -628,7 +494,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 							if ident, ok := n.(*ast.Ident); ok {
 								if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
 									if depID, ok := nodesMap[obj]; ok && depID != curNodeID {
-										graph[curNodeID][depID] = struct{}{}
+										addDependency(graph, curNodeID, depID)
 									}
 								}
 							}
@@ -647,7 +513,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 							// 检查参数类型是否是类型参数
 							if typeParam, ok := paramType.(*types.TypeParam); ok {
 								if depID, ok := nodesMap[typeParam.Obj()]; ok && depID != curNodeID {
-									graph[curNodeID][depID] = struct{}{}
+									addDependency(graph, curNodeID, depID)
 								}
 							}
 							// 检查参数类型是否包含类型参数
@@ -656,7 +522,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 									for j := 0; j < named.TypeParams().Len(); j++ {
 										typeParam := named.TypeParams().At(j)
 										if depID, ok := nodesMap[typeParam.Obj()]; ok && depID != curNodeID {
-											graph[curNodeID][depID] = struct{}{}
+											addDependency(graph, curNodeID, depID)
 										}
 									}
 								}
@@ -671,7 +537,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 							// 检查返回值类型是否是类型参数
 							if typeParam, ok := resultType.(*types.TypeParam); ok {
 								if depID, ok := nodesMap[typeParam.Obj()]; ok && depID != curNodeID {
-									graph[curNodeID][depID] = struct{}{}
+									addDependency(graph, curNodeID, depID)
 								}
 							}
 							// 检查返回值类型是否包含类型参数
@@ -680,7 +546,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 									for j := 0; j < named.TypeParams().Len(); j++ {
 										typeParam := named.TypeParams().At(j)
 										if depID, ok := nodesMap[typeParam.Obj()]; ok && depID != curNodeID {
-											graph[curNodeID][depID] = struct{}{}
+											addDependency(graph, curNodeID, depID)
 										}
 									}
 								}
@@ -695,19 +561,17 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 					foundExactMatch := false
 
 					// 遍历已知的接口
-					for ifaceID, ifaceInfo := range interfacesInfo {
+					for _, ifaceInfo := range interfaceMap {
 						// 检查这个接口是否包含调用的方法
 						if _, ok := ifaceInfo.Methods[methodName]; ok {
 							// 找到接口对应的所有实现类型
-							if impls, ok := interfaceImpls.ImplementersMap[ifaceID]; ok && len(impls) > 0 {
+							for _, implTypeID := range ifaceInfo.Implements {
 								foundExactMatch = true
-								for _, implTypeID := range impls {
-									// 查找实现类型的对应方法
-									if typeMethods, ok := typeMethodsMap[implTypeID]; ok {
-										if methodID, found := typeMethods[methodName]; found {
-											// 添加从当前节点到实现类型方法的依赖关系
-											graph[curNodeID][methodID] = struct{}{}
-										}
+								// 查找实现类型的对应方法
+								if typeMethods, ok := typeMethodsMap[implTypeID]; ok {
+									if methodID, found := typeMethods[methodName]; found {
+										// 添加从当前节点到实现类型方法的依赖关系
+										addDependency(graph, curNodeID, methodID)
 									}
 								}
 							}
@@ -716,25 +580,22 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 
 					// 如果没有找到精确匹配，则回退到查找所有包含该方法名的接口实现
 					if !foundExactMatch {
-						for _, methodImpls := range interfaceImpls.MethodImplementersMap {
-							if impls, ok := methodImpls[methodName]; ok && len(impls) > 0 {
-								for _, implID := range impls {
-									graph[curNodeID][implID] = struct{}{}
+						for _, ifaceInfo := range interfaceMap {
+							if _, ok := ifaceInfo.Methods[methodName]; ok {
+								for _, implID := range ifaceInfo.Methods[methodName].ImplementMethods {
+									addDependency(graph, curNodeID, implID)
 								}
 							}
 						}
 					}
 				} else {
 					// 检查是否有任何接口包含这个方法名
-					for ifaceID, ifaceInfo := range interfacesInfo {
+					for _, ifaceInfo := range interfaceMap {
 						// 检查该方法是否属于接口
 						if _, ok := ifaceInfo.Methods[methodName]; ok {
 							// 找到所有实现该接口方法的类型
-							if impls, ok := interfaceImpls.MethodImplementersMap[ifaceID][methodName]; ok {
-								for _, implID := range impls {
-									// 添加依赖关系
-									graph[curNodeID][implID] = struct{}{}
-								}
+							for _, implID := range ifaceInfo.Methods[methodName].ImplementMethods {
+								addDependency(graph, curNodeID, implID)
 							}
 						}
 					}
@@ -762,7 +623,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 			if depID, ok := nodesMap[obj]; ok {
 				// 避免自引用
 				if depID != curNodeID {
-					graph[curNodeID][depID] = struct{}{}
+					addDependency(graph, curNodeID, depID)
 				}
 			}
 			return true
@@ -790,7 +651,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 								if ident, ok := n.(*ast.Ident); ok {
 									if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
 										if depID, ok := nodesMap[obj]; ok && depID != curID {
-											graph[curID][depID] = struct{}{}
+											addDependency(graph, curID, depID)
 										}
 									}
 								}
@@ -806,7 +667,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 								if ident, ok := n.(*ast.Ident); ok {
 									if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
 										if depID, ok := nodesMap[obj]; ok && depID != curID {
-											graph[curID][depID] = struct{}{}
+											addDependency(graph, curID, depID)
 										}
 									}
 								}
@@ -822,7 +683,7 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 								if ident, ok := n.(*ast.Ident); ok {
 									if obj := pkg.TypesInfo.Uses[ident]; obj != nil {
 										if depID, ok := nodesMap[obj]; ok && depID != curID {
-											graph[curID][depID] = struct{}{}
+											addDependency(graph, curID, depID)
 										}
 									}
 								}
@@ -865,6 +726,139 @@ func BuildDependency(pkgs []*packages.Package) (*DependencyInfo, error) {
 		nodes:    nodesInfo,
 		revGraph: revGraph,
 	}, nil
+}
+
+// parseAstInterfaceType 初始化AST接口类型
+func parseAstInterfaceType(pkg *packages.Package, t *ast.InterfaceType) *interfaceInfo {
+	// 记录接口信息
+	iface := &interfaceInfo{
+		Methods:    make(map[string]*methodInfo),
+		Implements: make([]string, 0),
+	}
+
+	if t.Methods != nil {
+		for _, method := range t.Methods.List {
+			// in interface, method.Names length always is 1
+			if len(method.Names) != 1 {
+				panic(fmt.Sprintf("invalid interface method: %v", GetNodeId(pkg, method)))
+			}
+			ident := method.Names[0]
+			methodObj := pkg.TypesInfo.Defs[ident]
+			if methodObj == nil {
+				continue
+			}
+			methodFunc, ok := methodObj.(*types.Func)
+			if !ok {
+				continue
+			}
+
+			iface.Methods[ident.Name] = &methodInfo{
+				Method: methodFunc,
+			}
+		}
+	}
+
+	// 排除空接口 (interface{})
+	if len(iface.Methods) == 0 {
+		return nil
+	}
+
+	return iface
+}
+
+// parseInterfaceImplementations 解析接口实现
+func parseInterfaceImplementations(nodesInfo map[string]*node, interfacesInfo map[string]*interfaceInfo, typeMethodsMap map[string]map[string]string) error {
+	// 遍历所有顶层声明，组装接口表
+	for nodeID, node := range nodesInfo {
+		if node.Obj == nil {
+			continue
+		}
+
+		// 只处理类型声明
+		typeNameObj, ok := node.Obj.(*types.TypeName)
+		if !ok {
+			continue
+		}
+
+		typeObj := typeNameObj.Type()
+		if typeObj == nil {
+			continue
+		}
+
+		// 确保是命名类型
+		if _, ok := typeObj.(*types.Named); !ok {
+			continue
+		}
+
+		// 判断这个类型是否实现了任何接口
+		for ifaceID, ifaceInfo := range interfacesInfo {
+			// 跳过自身
+			if ifaceID == nodeID {
+				continue
+			}
+
+			// 记录实现了接口的哪些方法
+			implemented := make(map[string]bool)
+
+			// 检查这个类型是否实现了接口的所有方法
+			allImplemented := true
+			for methodName, ifaceMethod := range ifaceInfo.Methods {
+				// 检查类型是否有这个方法
+				methodFound := false
+
+				// 获取接口方法签名
+				ifaceMethodSig, ok := ifaceMethod.Method.Type().(*types.Signature)
+				if !ok {
+					continue
+				}
+
+				// 查找类型的方法集合中是否包含此方法
+				if methods, ok := typeMethodsMap[nodeID]; ok {
+					if methodID, found := methods[methodName]; found {
+						// 获取类型方法对象
+						methodNode := nodesInfo[methodID]
+						if methodNode == nil || methodNode.Obj == nil {
+							continue
+						}
+						typeMethod, ok := methodNode.Obj.(*types.Func)
+						if !ok {
+							continue
+						}
+
+						// 获取类型方法签名
+						typeMethodSig, ok := typeMethod.Type().(*types.Signature)
+						if !ok {
+							continue
+						}
+
+						// 检查方法签名是否匹配
+						if signaturesCompatible(ifaceMethodSig, typeMethodSig) {
+							methodFound = true
+							ifaceInfo.Methods[methodName].ImplementMethods = append(
+								ifaceInfo.Methods[methodName].ImplementMethods,
+								methodID,
+							)
+
+							implemented[methodName] = true
+						}
+					}
+				}
+
+				if !methodFound {
+					// 如果缺少任何方法或签名不匹配，则不完全实现接口
+					allImplemented = false
+					break
+				}
+			}
+
+			// 如果实现了所有方法，则记录为接口的实现者
+			if allImplemented && len(implemented) == len(ifaceInfo.Methods) {
+				ifaceInfo.Implements = append(ifaceInfo.Implements, nodeID)
+			}
+		}
+	}
+
+	return nil
 }
 
 // exprToString 返回表达式的字符串表示（对标识符和星号类型作简单处理）
@@ -1225,4 +1219,15 @@ func LoadPackages(repo string) ([]*packages.Package, error) {
 		return nil, fmt.Errorf("parser project AST failed in %s: %v", repo, err)
 	}
 	return pkgs, nil
+}
+
+// addDependency adds a dependency edge from fromID to toID in the graph, avoiding self-references.
+func addDependency(graph Graph, fromID, toID string) {
+	if fromID == toID {
+		return // Avoid self-references
+	}
+	if _, ok := graph[fromID]; !ok {
+		graph[fromID] = make(map[string]struct{})
+	}
+	graph[fromID][toID] = struct{}{}
 }

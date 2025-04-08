@@ -30,10 +30,10 @@ var impactCmd = &cobra.Command{
 }
 
 var (
-	oldCommit    string
-	newCommit    string
-	repo         string // 仓库路径
-	scope        string // 报告的变更范围(all, service)
+	oldCommit string
+	newCommit string
+	repo      string // 仓库路径
+	scope     string // 报告的变更范围(all, service)
 )
 
 const (
