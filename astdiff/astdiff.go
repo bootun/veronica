@@ -78,15 +78,10 @@ func analyzePackage(pkg *packages.Package, result *AnalysisResult) {
 		fullFileName := pkg.Fset.File(file.Pos()).Name()
 		baseFileName := filepath.Base(fullFileName)
 
-		// 用于存储当前遍历的顶层函数信息
-		var currentFunc *ast.FuncDecl
-
-		ast.Inspect(file, func(n ast.Node) bool {
-			switch x := n.(type) {
+		for _, decl := range file.Decls {
+			switch d := decl.(type) {
 			case *ast.FuncDecl:
-				// 记录当前顶层函数
-				currentFunc = x
-				funcName := parser.GetFuncOrMethodName(x)
+				funcName := parser.GetFuncOrMethodName(d)
 				id := parser.GetObjectID(pkgName, baseFileName, funcName)
 				result.Objects[id] = struct {
 					Type     string
@@ -96,41 +91,17 @@ func analyzePackage(pkg *packages.Package, result *AnalysisResult) {
 				}{
 					Type:     "func",
 					Package:  pkgName,
-					Position: pkg.Fset.Position(x.Pos()),
-					Node:     x,
+					Position: pkg.Fset.Position(d.Pos()),
+					Node:     d,
 				}
 			case *ast.GenDecl:
-				// 如果这个声明在函数内部，使用顶层函数的信息
-				if currentFunc != nil {
-					funcName := parser.GetFuncOrMethodName(currentFunc)
-					id := parser.GetObjectID(pkgName, baseFileName, funcName)
-
-					// 如果这个ID已经存在，说明我们已经记录过这个函数了
-					if _, exists := result.Objects[id]; exists {
-						return true
-					}
-
-					result.Objects[id] = struct {
-						Type     string
-						Package  string
-						Position token.Position
-						Node     ast.Node
-					}{
-						Type:     "func",
-						Package:  pkgName,
-						Position: pkg.Fset.Position(currentFunc.Pos()),
-						Node:     currentFunc,
-					}
-					return true
-				}
-
-				// 处理顶层声明
-				for _, spec := range x.Specs {
+				// 处理顶层声明 (var, const, type)
+				for _, spec := range d.Specs {
 					switch s := spec.(type) {
-					case *ast.ValueSpec:
+					case *ast.ValueSpec: // var, const
 						for _, name := range s.Names {
 							var objType string
-							if x.Tok == token.CONST {
+							if d.Tok == token.CONST {
 								objType = "const"
 							} else {
 								objType = "var"
@@ -148,7 +119,7 @@ func analyzePackage(pkg *packages.Package, result *AnalysisResult) {
 								Node:     s,
 							}
 						}
-					case *ast.TypeSpec:
+					case *ast.TypeSpec: // type
 						id := parser.GetObjectID(pkgName, baseFileName, s.Name.Name)
 						result.Objects[id] = struct {
 							Type     string
@@ -157,15 +128,18 @@ func analyzePackage(pkg *packages.Package, result *AnalysisResult) {
 							Node     ast.Node
 						}{
 							Type:     "type",
-							Package:  pkg.PkgPath,
+							Package:  pkgName,
 							Position: pkg.Fset.Position(s.Pos()),
 							Node:     s,
 						}
+					case *ast.ImportSpec:
+						continue
+					default:
+						panic(fmt.Sprintf("unsupported node type: %T", s))
 					}
 				}
 			}
-			return true
-		})
+		}
 	}
 }
 
@@ -189,14 +163,16 @@ func compareResults(old, new *AnalysisResult) *AnalysisResult {
 		if oldObj, exists := old.Objects[key]; exists {
 			// 检查包名和类型是否变化
 			if oldObj.Package != newObj.Package || oldObj.Type != newObj.Type {
-				result.Changes = append(result.Changes, Change{
-					Type:       ChangeTypeModified,
-					Package:    newObj.Package,
-					Object:     objName,
-					ObjectType: newObj.Type,
-					ObjectID:   key,
-					File:       fileName,
-				})
+				// unreachable code
+				panic(fmt.Sprintf("package or type changed: %s, %s", oldObj.Package, newObj.Package))
+				// result.Changes = append(result.Changes, Change{
+				// 	Type:       ChangeTypeModified,
+				// 	Package:    newObj.Package,
+				// 	Object:     objName,
+				// 	ObjectType: newObj.Type,
+				// 	ObjectID:   key,
+				// 	File:       fileName,
+				// })
 			} else {
 				// 检查对象内容是否变化
 				if !astNodesEqual(oldObj.Node, newObj.Node) {
