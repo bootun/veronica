@@ -2,9 +2,9 @@ package parser
 
 import (
 	"os"
-	"regexp"
 
 	"github.com/pkg/errors"
+	"golang.org/x/mod/modfile"
 )
 
 // Go mod 信息
@@ -25,21 +25,19 @@ func ParseGoModuleInfo(path string) (*GoModuleInfo, error) {
 }
 
 func parseGoModContent(content []byte) (*GoModuleInfo, error) {
-	var info GoModuleInfo
-	// TODO: simple parser
-	moduleExp := regexp.MustCompile(`module (.+)`)
-	goVersionExp := regexp.MustCompile(`go (.+)`)
-
-	if matches := moduleExp.FindSubmatch(content); len(matches) == 2 {
-		info.Name = string(matches[1])
-	} else {
+	mf, err := modfile.Parse("go.mod", content, nil)
+	if err != nil {
+		return nil, err
+	}
+	if mf.Module == nil {
 		return nil, errors.New("module name not found")
 	}
-
-	if matches := goVersionExp.FindSubmatch(content); len(matches) == 2 {
-		info.GoVersion = string(matches[1])
-	} else {
+	if mf.Go == nil {
 		return nil, errors.New("go version not found")
 	}
-	return &info, nil
+	info := &GoModuleInfo{
+		Name:      mf.Module.Mod.Path,
+		GoVersion: mf.Go.Version,
+	}
+	return info, nil
 }
